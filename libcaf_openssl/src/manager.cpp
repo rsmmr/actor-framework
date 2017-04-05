@@ -19,17 +19,20 @@
 
 #include "caf/openssl/manager.hpp"
 
-#include "caf/expected.hpp"
-#include "caf/actor_system.hpp"
-#include "caf/scoped_actor.hpp"
 #include "caf/actor_control_block.hpp"
+#include "caf/actor_system.hpp"
 #include "caf/actor_system_config.hpp"
+#include "caf/expected.hpp"
+#include "caf/scoped_actor.hpp"
 
-#include "caf/io/middleman.hpp"
 #include "caf/io/basp_broker.hpp"
+#include "caf/io/middleman.hpp"
 #include "caf/io/network/default_multiplexer.hpp"
 
 #include "caf/openssl/middleman_actor.hpp"
+
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 
 namespace caf {
 namespace openssl {
@@ -55,7 +58,11 @@ void manager::stop() {
 
 void manager::init(actor_system_config&) {
   CAF_LOG_TRACE("");
-  // TODO: initialize OpenSSL state
+
+  ERR_load_crypto_strings();
+  OPENSSL_add_all_algorithms_conf();
+  SSL_library_init();
+  SSL_load_error_strings();
 }
 
 actor_system::module::id_t manager::id() const {

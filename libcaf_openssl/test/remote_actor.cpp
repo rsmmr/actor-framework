@@ -141,6 +141,7 @@ CAF_TEST_FIXTURE_SCOPE(dynamic_remote_actor_tests, fixture)
 using openssl::remote_actor;
 using openssl::publish;
 
+#if 0
 CAF_TEST(identity_semantics) {
   // server side
   auto server = server_side.spawn(make_pong_behavior);
@@ -156,6 +157,7 @@ CAF_TEST(identity_semantics) {
   CAF_CHECK_EQUAL(server2, remote_actor(client_side, local_host, port2));
   anon_send_exit(server, exit_reason::user_shutdown);
 }
+#endif
 
 CAF_TEST(ping_pong) {
   // server side
