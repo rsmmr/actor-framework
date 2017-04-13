@@ -22,10 +22,10 @@
 #define CAF_SUITE openssl_dynamic_remote_actor
 #include "caf/test/unit_test.hpp"
 
-#include <vector>
+#include <algorithm>
 #include <sstream>
 #include <utility>
-#include <algorithm>
+#include <vector>
 
 #include "caf/all.hpp"
 #include "caf/io/all.hpp"
@@ -43,8 +43,7 @@ public:
     load<io::middleman>();
     load<openssl::manager>();
     add_message_type<std::vector<int>>("std::vector<int>");
-    actor_system_config::parse(test::engine::argc(),
-                               test::engine::argv());
+    actor_system_config::parse(test::engine::argc(), test::engine::argv());
   }
 };
 
@@ -56,30 +55,25 @@ struct fixture {
 };
 
 behavior make_pong_behavior() {
-  return {
-    [](int val) -> int {
-      CAF_MESSAGE("pong with " << ++val);
-      return val;
-    }
-  };
+  return {[](int val) -> int {
+    CAF_MESSAGE("pong with " << ++val);
+    return val;
+  }};
 }
 
 behavior make_ping_behavior(event_based_actor* self, const actor& pong) {
   CAF_MESSAGE("ping with " << 0);
   self->send(pong, 0);
-  return {
-    [=](int val) -> int {
-      if (val == 3) {
-        CAF_MESSAGE("ping with exit");
-        self->send_exit(self->current_sender(),
-                        exit_reason::user_shutdown);
-        CAF_MESSAGE("ping quits");
-        self->quit();
-      }
-      CAF_MESSAGE("ping with " << val);
-      return val;
+  return {[=](int val) -> int {
+    if (val == 3) {
+      CAF_MESSAGE("ping with exit");
+      self->send_exit(self->current_sender(), exit_reason::user_shutdown);
+      CAF_MESSAGE("ping quits");
+      self->quit();
     }
-  };
+    CAF_MESSAGE("ping with " << val);
+    return val;
+  }};
 }
 
 std::string to_string(const std::vector<int>& vec) {
@@ -91,47 +85,38 @@ std::string to_string(const std::vector<int>& vec) {
 }
 
 behavior make_sort_behavior() {
-  return {
-    [](std::vector<int>& vec) -> std::vector<int> {
-      CAF_MESSAGE("sorter received: " << to_string(vec));
-      std::sort(vec.begin(), vec.end());
-      CAF_MESSAGE("sorter sent: " << to_string(vec));
-      return std::move(vec);
-    }
-  };
+  return {[](std::vector<int>& vec) -> std::vector<int> {
+    CAF_MESSAGE("sorter received: " << to_string(vec));
+    std::sort(vec.begin(), vec.end());
+    CAF_MESSAGE("sorter sent: " << to_string(vec));
+    return std::move(vec);
+  }};
 }
 
-behavior make_sort_requester_behavior(event_based_actor* self, const actor& sorter) {
+behavior make_sort_requester_behavior(event_based_actor* self,
+                                      const actor& sorter) {
   self->send(sorter, std::vector<int>{5, 4, 3, 2, 1});
-  return {
-    [=](const std::vector<int>& vec) {
-      CAF_MESSAGE("sort requester received: " << to_string(vec));
-      for (size_t i = 1; i < vec.size(); ++i)
-        CAF_CHECK_EQUAL(static_cast<int>(i), vec[i - 1]);
-      self->send_exit(sorter, exit_reason::user_shutdown);
-      self->quit();
-    }
-  };
+  return {[=](const std::vector<int>& vec) {
+    CAF_MESSAGE("sort requester received: " << to_string(vec));
+    for (size_t i = 1; i < vec.size(); ++i)
+      CAF_CHECK_EQUAL(static_cast<int>(i), vec[i - 1]);
+    self->send_exit(sorter, exit_reason::user_shutdown);
+    self->quit();
+  }};
 }
 
 behavior fragile_mirror(event_based_actor* self) {
-  return {
-    [=](int i) {
-      self->quit(exit_reason::user_shutdown);
-      return i;
-    }
-  };
+  return {[=](int i) {
+    self->quit(exit_reason::user_shutdown);
+    return i;
+  }};
 }
 
 behavior linking_actor(event_based_actor* self, const actor& buddy) {
   CAF_MESSAGE("link to mirror and send dummy message");
   self->link_to(buddy);
   self->send(buddy, 42);
-  return {
-    [](int i) {
-      CAF_CHECK_EQUAL(i, 42);
-    }
-  };
+  return {[](int i) { CAF_CHECK_EQUAL(i, 42); }};
 }
 
 } // namespace <anonymous>

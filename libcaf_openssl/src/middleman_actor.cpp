@@ -73,9 +73,10 @@ struct ssl_state {
   SSL* ssl;
 
   void debug(std::string msg1, std::string msg2 = "") {
-
+#if 0
     std::cerr << (side == Side::Client ? "client" : "server") << ": " << msg1
               << " " << msg2 << std::endl;
+#endif
   }
 
   ssl_state(Side side) : side(side) {
@@ -106,90 +107,111 @@ struct ssl_state {
   }
 };
 
+static void print_bytes(const char* prefix, const void* buf, size_t size) {
+  const char* b = (const char*)buf;
+  fprintf(stderr, "%10s (%lu) |", prefix, size);
+  while (size--) {
+    auto c = *b++;
+
+    if (isprint(c))
+      fputc((char)c, stderr);
+    else
+      fprintf(stderr, "\\x%02x", (unsigned char)c);
+  }
+  fprintf(stderr, "\n");
+}
+
 struct ssl_policy {
-  ssl_policy(ssl_state state) : state_(state) {
+  ssl_policy(std::shared_ptr<ssl_state> state) : state_(state) {
   }
 
   /// Reads up to `len` bytes from an OpenSSL socket.
-  bool read_some(size_t& result, native_socket /* fd */, void* buf,
-                 size_t len) {
+  bool read_some(size_t& result, native_socket fd, void* buf, size_t len) {
     CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
 
-    state_.debug("read");
+    state_->debug("read");
 
-    auto ret = SSL_read(state_.ssl, buf, len);
+    if (len == 0)
+      return 0;
 
-    if (ret >= 0) {
-      state_.debug("read", "success");
-      result = ret;
-      return true;
-    }
+    while (true) {
+      wait_for_fd(SSL_get_fd(state_->ssl), 1000);
+      auto ret = SSL_read(state_->ssl, buf, len);
 
-    auto err = SSL_get_error(state_.ssl, ret);
-
-    switch (err) {
-      case SSL_ERROR_WANT_READ:
-        state_.debug("read", "wants read");
-        result = 0;
+      if (ret > 0) {
+        state_->debug("read", "success");
+        result = ret;
+        print_bytes("read", buf, len);
         return true;
+      }
+      auto err = SSL_get_error(state_->ssl, ret);
 
-      case SSL_ERROR_WANT_WRITE:
-        state_.debug("read", "wants write");
-        result = 0;
-        return true;
+      switch (err) {
+        case SSL_ERROR_WANT_READ:
+          state_->debug("read", "wants read");
+          continue;
 
-      case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
-      case SSL_ERROR_SYSCALL:     // Socket connection closed.
-        state_.debug("read", "error A");
-        return false;
+        case SSL_ERROR_WANT_WRITE:
+          state_->debug("read", "wants write");
+          continue;
 
-      default: // Other error.
-        // TODO: Log.
-        state_.debug("read",
-                     std::string("error B") + ERR_error_string(err, nullptr));
-        ERR_print_errors_fp(stderr);
-        return false;
+        case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
+        case SSL_ERROR_SYSCALL:     // Socket connection closed.
+          state_->debug("read", "error A");
+          return false;
+
+        default: // Other error.
+          // TODO: Log.
+          state_->debug(
+            "read", std::string("error B") + ERR_error_string(err, nullptr));
+          ERR_print_errors_fp(stderr);
+          return false;
+      }
     }
   }
 
-  bool write_some(size_t& result, native_socket /* fd */, const void* buf,
+  bool write_some(size_t& result, native_socket fd, const void* buf,
                   size_t len) {
     CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
 
-    state_.debug("write");
+    state_->debug("write");
 
-    auto ret = SSL_write(state_.ssl, buf, len);
-
-    if (ret >= 0) {
-      state_.debug("write", "success");
-      result = ret;
+    if (len == 0)
       return true;
-    }
 
-    auto err = SSL_get_error(state_.ssl, ret);
+    while (true) {
+      auto ret = SSL_write(state_->ssl, buf, len);
 
-    switch (err) {
-      case SSL_ERROR_WANT_READ:
-        state_.debug("write", "wants read");
-        result = 0;
+      if (ret > 0) {
+        state_->debug("write", "success");
+        result = ret;
+        print_bytes("write", buf, result);
         return true;
+      }
 
-      case SSL_ERROR_WANT_WRITE:
-        state_.debug("write", "wants write");
-        result = 0;
-        return true;
+      auto err = SSL_get_error(state_->ssl, ret);
 
-      case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
-      case SSL_ERROR_SYSCALL:     // Socket connection closed.
-        state_.debug("write", "error A");
-        return false;
+      switch (err) {
+        case SSL_ERROR_WANT_READ:
+          state_->debug("write", "wants read");
+          continue;
 
-      default: // Other error.
-        // TODO: Log.
-        state_.debug("write",
-                     std::string("error B") + ERR_error_string(err, nullptr));
-        ERR_print_errors_fp(stderr);
-        return false;
+        case SSL_ERROR_WANT_WRITE:
+          state_->debug("write", "wants write");
+          continue;
+
+        case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
+        case SSL_ERROR_SYSCALL:     // Socket connection closed.
+          state_->debug("write", "error A");
+          return false;
+
+        default: // Other error.
+          // TODO: Log.
+          state_->debug(
+            "write", std::string("error B") + ERR_error_string(err, nullptr));
+          ERR_print_errors_fp(stderr);
+          return false;
+      }
     }
   }
 
@@ -209,39 +231,41 @@ struct ssl_policy {
         return false;
     }
 
-    state_.init();
-    SSL_set_fd(state_.ssl, result);
-    SSL_set_accept_state(state_.ssl);
+    fprintf(stderr, "accept fd %d\n", result);
+
+    state_->init();
+    SSL_set_fd(state_->ssl, result);
+    SSL_set_accept_state(state_->ssl);
 
     while (true) {
-      wait_for_fd(SSL_get_fd(state_.ssl), 1000);
-      auto ret = SSL_accept(state_.ssl);
+      wait_for_fd(SSL_get_fd(state_->ssl), 1000);
+      auto ret = SSL_accept(state_->ssl);
 
       if (ret > 0) {
-        state_.debug("accept", "accepted!");
+        state_->debug("accept", "accepted!");
         return true;
       }
 
-      auto err = SSL_get_error(state_.ssl, ret);
+      auto err = SSL_get_error(state_->ssl, ret);
 
       switch (err) {
         case SSL_ERROR_WANT_READ:
-          state_.debug("accept", "wants read");
+          state_->debug("accept", "wants read");
           continue;
 
         case SSL_ERROR_WANT_WRITE:
-          state_.debug("accept", "wants write");
+          state_->debug("accept", "wants write");
           continue;
 
         case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
         case SSL_ERROR_SYSCALL:     // Socket connection closed.
-          state_.debug("accept", "error A");
+          state_->debug("accept", "error A");
           return false;
 
         default: // Other error.
           // TODO: Log.
-          state_.debug("accept",
-                       std::string("error B") + ERR_error_string(err, nullptr));
+          state_->debug(
+            "accept", std::string("error B") + ERR_error_string(err, nullptr));
           ERR_print_errors_fp(stderr);
           return false;
       }
@@ -251,15 +275,16 @@ struct ssl_policy {
   }
 
 private:
-  ssl_state state_;
+  std::shared_ptr<ssl_state> state_;
 };
 
 class scribe_impl : public io::scribe {
 public:
-  scribe_impl(default_mpx& mpx, ssl_state ssl)
-      : scribe(io::network::conn_hdl_from_socket(SSL_get_fd(ssl.ssl))),
+  scribe_impl(default_mpx& mpx, native_socket fd,
+              std::shared_ptr<ssl_state> ssl)
+      : scribe(io::network::conn_hdl_from_socket(fd)),
         launched_(false),
-        stream_(mpx, SSL_get_fd(ssl.ssl), ssl) {
+        stream_(mpx, fd, ssl) {
     // nop
   }
 
@@ -330,9 +355,11 @@ private:
 
 class doorman_impl : public io::doorman {
 public:
-  doorman_impl(default_mpx& mx, native_socket fd, ssl_state ssl)
+  doorman_impl(default_mpx& mx, native_socket fd,
+               std::shared_ptr<ssl_state> ssl)
       : doorman(io::network::accept_hdl_from_socket(fd)),
-        acceptor_(mx, fd, ssl) {
+        acceptor_(mx, fd, ssl),
+        ssl_(ssl) {
     // nop
   }
 
@@ -346,7 +373,8 @@ public:
       // further activities for the broker
       return false;
     auto& dm = acceptor_.backend();
-    auto sptr = dm.new_scribe(acceptor_.accepted_socket());
+    auto sptr =
+      make_counted<scribe_impl>(dm, acceptor_.accepted_socket(), ssl_);
     auto hdl = sptr->hdl();
     parent()->add_scribe(std::move(sptr));
     return doorman::new_connection(&dm, hdl);
@@ -387,6 +415,7 @@ public:
 
 private:
   io::network::acceptor_impl<ssl_policy> acceptor_;
+  std::shared_ptr<ssl_state> ssl_;
 };
 
 class middleman_actor_impl : public io::middleman_actor_impl {
@@ -407,42 +436,44 @@ protected:
     if (!fd)
       return std::move(fd.error());
 
-    ssl_state state(Side::Client);
-    state.init();
+    auto state = std::make_shared<ssl_state>(Side::Client);
+    state->init();
 
-    SSL_set_fd(state.ssl, *fd);
-    SSL_set_connect_state(state.ssl);
+    fprintf(stderr, "connect fd %d\n", *fd);
+
+    SSL_set_fd(state->ssl, *fd);
+    SSL_set_connect_state(state->ssl);
 
     while (true) {
-      auto ret = SSL_connect(state.ssl);
+      auto ret = SSL_connect(state->ssl);
 
       if (ret > 0) {
-        state.debug("connect", "connected!");
-        return make_counted<scribe_impl>(mpx(), state);
+        state->debug("connect", "connected!");
+        return make_counted<scribe_impl>(mpx(), *fd, state);
       }
 
-      auto err = SSL_get_error(state.ssl, ret);
+      auto err = SSL_get_error(state->ssl, ret);
 
       switch (err) {
         case SSL_ERROR_WANT_READ:
-          state.debug("connect", "wants read");
+          state->debug("connect", "wants read");
           wait_for_fd(*fd, 100);
           continue;
 
         case SSL_ERROR_WANT_WRITE:
-          state.debug("connect", "wants write");
+          state->debug("connect", "wants write");
           wait_for_fd(*fd, 100);
           continue;
 
         case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
         case SSL_ERROR_SYSCALL:     // Socket connection closed.
-          state.debug("connect", "error A");
+          state->debug("connect", "error A");
           return sec::cannot_connect_to_node;
 
         default: // Other error.
           // TODO: Log.
-          state.debug("connect",
-                      std::string("error B") + ERR_error_string(err, nullptr));
+          state->debug("connect",
+                       std::string("error B") + ERR_error_string(err, nullptr));
           ERR_print_errors_fp(stderr);
           return sec::cannot_connect_to_node;
       }
@@ -457,7 +488,8 @@ protected:
     if (!fd)
       return std::move(fd.error());
 
-    ssl_state state(Side::Server);
+    auto state = std::make_shared<ssl_state>(Side::Server);
+    state->init();
 
     return make_counted<doorman_impl>(mpx(), *fd, state);
   }
