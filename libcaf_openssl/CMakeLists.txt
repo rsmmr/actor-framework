@@ -10,7 +10,8 @@ set (LIBCAF_OPENSSL_SRCS
      src/manager.cpp
      src/middleman_actor.cpp
      src/publish.cpp
-     src/remote_actor.cpp)
+     src/remote_actor.cpp
+     src/ssl_session.cpp)
 
 add_custom_target(libcaf_openssl)
 

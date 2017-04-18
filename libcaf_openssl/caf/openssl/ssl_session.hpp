@@ -17,67 +17,43 @@
  * http://www.boost.org/LICENSE_1_0.txt.                                      *
  ******************************************************************************/
 
-#ifndef CAF_OPENSSL_MANAGER_HPP
-#define CAF_OPENSSL_MANAGER_HPP
-
-#include <set>
-#include <string>
+#ifndef CAF_OPENSSL_SSL_SESSION_HPP
+#define CAF_OPENSSL_SSL_SESSION_HPP
 
 #include "caf/actor_system.hpp"
-#include "caf/io/middleman_actor.hpp"
+#include "caf/io/network/native_socket.hpp"
+
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 
 namespace caf {
 namespace openssl {
+using native_socket = io::network::native_socket;
 
-/// Stores OpenSSL context information and provides access to necessary
-/// credentials for establishing connections.
-class manager : public actor_system::module {
+class ssl_session {
 public:
-  ~manager() override;
+  ssl_session(actor_system& sys);
+  ~ssl_session();
 
-  void start() override;
-
-  void stop() override;
-
-  void init(actor_system_config&) override;
-
-  id_t id() const override;
-
-  void* subtype_ptr() override;
-
-  /// Returns an SSL-aware implementation of the middleman actor interface.
-  inline const io::middleman_actor& actor_handle() const {
-    return manager_;
-  }
-
-  /// Returns the enclosing actor system.
-  inline actor_system& system() {
-    return system_;
-  }
-
-  /// Returns true if configured to require certificate-based authentication
-  /// of peers.
-  bool authentication_enabled();
-
-  /// Returns an OpenSSL manager using the default network backend.
-  /// @warning Creating an OpenSSL manager will fail when using the ASIO
-  ///          network backend or any other custom implementation.
-  /// @throws `logic_error` if the middleman is not loaded or is not using the
-  ///         default network backend.
-  static actor_system::module* make(actor_system&, detail::type_list<>);
+  bool read_some(size_t& result, native_socket fd, void* buf, size_t len);
+  bool write_some(size_t& result, native_socket fd, const void* buf,
+                  size_t len);
+  bool connect(native_socket fd);
+  bool try_accept(native_socket fd);
+  const char* openssl_passphrase();
 
 private:
-  /// Private since instantiation is only allowed via `make`.
-  manager(actor_system& sys);
+  SSL_CTX* create_ssl_context(actor_system& sys);
+  std::string get_ssl_error();
+  void raise_ssl_error(std::string msg);
+  bool handle_ssl_result(int ret);
 
-  /// Reference to the parent.
-  actor_system& system_;
-
-  /// OpenSSL-aware connection manager.
-  io::middleman_actor manager_;
+  SSL_CTX* ctx;
+  SSL* ssl;
+  std::string openssl_passphrase_;
 };
 
 } // namespace openssl
 } // namespace caf
 
-#endif // CAF_OPENSSL_MANAGER_HPP
+#endif // CAF_OPENSSL_SSL_SESSION_HPP

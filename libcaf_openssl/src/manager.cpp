@@ -63,6 +63,9 @@ void manager::init(actor_system_config&) {
   OPENSSL_add_all_algorithms_conf();
   SSL_library_init();
   SSL_load_error_strings();
+
+  if (authentication_enabled() && !system().config().openssl_certificate.size())
+    CAF_RAISE_ERROR("No certificate configured for SSL endopint");
 }
 
 actor_system::module::id_t manager::id() const {
@@ -71,6 +74,13 @@ actor_system::module::id_t manager::id() const {
 
 void* manager::subtype_ptr() {
   return this;
+}
+
+bool manager::authentication_enabled() {
+  auto& cfg = system().config();
+  return cfg.openssl_certificate.size() || cfg.openssl_key.size()
+         || cfg.openssl_passphrase.size() || cfg.openssl_capath.size()
+         || cfg.openssl_cafile.size();
 }
 
 actor_system::module* manager::make(actor_system& sys, detail::type_list<>) {

@@ -23,9 +23,6 @@
 #include <tuple>
 #include <utility>
 
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-
 #include "caf/actor.hpp"
 #include "caf/actor_proxy.hpp"
 #include "caf/actor_system_config.hpp"
@@ -42,7 +39,7 @@
 #include "caf/io/network/default_multiplexer.hpp"
 #include "caf/io/network/interfaces.hpp"
 
-#include "caf/openssl/manager.hpp"
+#include "caf/openssl/ssl_session.hpp"
 
 namespace caf {
 namespace openssl {
@@ -52,76 +49,17 @@ namespace {
 using native_socket = io::network::native_socket;
 using default_mpx = io::network::default_multiplexer;
 
-struct ssl_connection {
-  ssl_connection() {
-    ctx = SSL_CTX_new(TLSv1_2_method());
-
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
-
-    if (!ctx)
-      CAF_RAISE_ERROR("cannot create OpenSSL context");
-
-    auto ecdh = EC_KEY_new_by_curve_name(NID_secp384r1);
-    if (!ecdh)
-      CAF_RAISE_ERROR("cannot get ECDH curve");
-
-    SSL_CTX_set_tmp_ecdh(ctx, ecdh);
-
-    if (!SSL_CTX_set_cipher_list(ctx, "AECDH-AES256-SHA"))
-      CAF_RAISE_ERROR("cannot set OpenSSL cipher");
-
-    ssl = SSL_new(ctx);
-
-    if (!ssl)
-      CAF_RAISE_ERROR("cannot create SSL session");
-  }
-
-  ~ssl_connection() {
-    SSL_free(ssl);
-    SSL_CTX_free(ctx);
+struct ssl_policy {
+  ssl_policy(std::shared_ptr<ssl_session> ssl) : ssl_(ssl) {
   }
 
   bool read_some(size_t& result, native_socket fd, void* buf, size_t len) {
-    CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
-
-    if (len == 0)
-      return 0;
-
-    auto ret = SSL_read(ssl, buf, len);
-
-    if (ret > 0) {
-      result = ret;
-      return true;
-    } else {
-      result = 0;
-      return handle_ssl_error(ret);
-    }
+    return ssl_->read_some(result, fd, buf, len);
   }
 
   bool write_some(size_t& result, native_socket fd, const void* buf,
                   size_t len) {
-    CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
-
-    if (len == 0)
-      return true;
-
-    auto ret = SSL_write(ssl, buf, len);
-
-    if (ret > 0) {
-      result = ret;
-      return true;
-    } else {
-      result = 0;
-      return handle_ssl_error(ret);
-    }
-  }
-
-  bool connect(native_socket fd) {
-    SSL_set_fd(ssl, fd);
-    SSL_set_connect_state(ssl);
-
-    auto ret = SSL_connect(ssl);
-    return ret > 0 || handle_ssl_error(ret);
+    return ssl_->write_some(result, fd, buf, len);
   }
 
   bool try_accept(native_socket& result, native_socket fd) {
@@ -140,65 +78,16 @@ struct ssl_connection {
         return false;
     }
 
-    SSL_set_fd(ssl, result);
-    SSL_set_accept_state(ssl);
-
-    auto ret = SSL_accept(ssl);
-
-    if (ret > 0)
-      return true;
-    else
-      return handle_ssl_error(ret);
+    return ssl_->try_accept(result);
   }
 
-  bool handle_ssl_error(int ret) {
-    auto err = SSL_get_error(ssl, ret);
-
-    switch (err) {
-      case SSL_ERROR_WANT_READ: // Try again next time.
-      case SSL_ERROR_WANT_WRITE:
-        return true;
-
-      case SSL_ERROR_ZERO_RETURN: // Regular remote connection shutdown.
-      case SSL_ERROR_SYSCALL:     // Socket connection closed.
-        return false;
-
-      default: // Other error.
-        // TODO: Log.
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-  }
-
-private:
-  SSL_CTX* ctx;
-  SSL* ssl;
-};
-
-struct ssl_policy {
-  ssl_policy(std::shared_ptr<ssl_connection> ssl) : ssl_(ssl) {
-  }
-
-  bool read_some(size_t& result, native_socket fd, void* buf, size_t len) {
-    return ssl_->read_some(result, fd, buf, len);
-  }
-
-  bool write_some(size_t& result, native_socket fd, const void* buf,
-                  size_t len) {
-    return ssl_->write_some(result, fd, buf, len);
-  }
-
-  bool try_accept(native_socket& result, native_socket fd) {
-    return ssl_->try_accept(result, fd);
-  }
-
-  std::shared_ptr<ssl_connection> ssl_;
+  std::shared_ptr<ssl_session> ssl_;
 };
 
 class scribe_impl : public io::scribe {
 public:
   scribe_impl(default_mpx& mpx, native_socket fd,
-              std::shared_ptr<ssl_connection> ssl)
+              std::shared_ptr<ssl_session> ssl)
       : scribe(io::network::conn_hdl_from_socket(fd)),
         launched_(false),
         stream_(mpx, fd, ssl) {
@@ -273,7 +162,7 @@ private:
 class doorman_impl : public io::doorman {
 public:
   doorman_impl(default_mpx& mx, native_socket fd,
-               std::shared_ptr<ssl_connection> ssl)
+               std::shared_ptr<ssl_session> ssl)
       : doorman(io::network::accept_hdl_from_socket(fd)),
         acceptor_(mx, fd, ssl),
         ssl_(ssl) {
@@ -332,7 +221,7 @@ public:
 
 private:
   io::network::acceptor_impl<ssl_policy> acceptor_;
-  std::shared_ptr<ssl_connection> ssl_;
+  std::shared_ptr<ssl_session> ssl_;
 };
 
 class middleman_actor_impl : public io::middleman_actor_impl {
@@ -351,7 +240,7 @@ protected:
     if (!fd)
       return std::move(fd.error());
 
-    auto ssl = std::make_shared<ssl_connection>();
+    auto ssl = std::make_shared<ssl_session>(system());
 
     if (ssl->connect(*fd))
       return make_counted<scribe_impl>(mpx(), *fd, ssl);
@@ -367,7 +256,7 @@ protected:
     if (!fd)
       return std::move(fd.error());
 
-    auto ssl = std::make_shared<ssl_connection>();
+    auto ssl = std::make_shared<ssl_session>(system());
 
     return make_counted<doorman_impl>(mpx(), *fd, ssl);
   }

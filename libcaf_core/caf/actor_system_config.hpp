@@ -278,6 +278,15 @@ public:
 
   std::string opencl_device_ids;
 
+  // -- config parameters of the OpenSSL module ---------------------------------
+
+  std::string openssl_certificate;
+  std::string openssl_key;
+  std::string openssl_passphrase;
+  std::string openssl_capath;
+  std::string openssl_cafile;
+  bool openssl_enable_hostname_check;
+
   // -- factories --------------------------------------------------------------
 
   value_factory_string_map value_factories_by_name;
