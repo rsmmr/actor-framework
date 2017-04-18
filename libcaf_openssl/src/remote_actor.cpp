@@ -45,13 +45,14 @@ expected<strong_actor_ptr> remote_actor(actor_system& sys,
               connect_atom::value, std::move(host), port)
     .receive(
       [&](const node_id&, strong_actor_ptr& ptr, std::set<std::string>& found) {
-        if (res) {
+        if (ptr) {
           if (sys.assignable(found, mpi))
             res = std::move(ptr);
           else
             res = sec::unexpected_actor_messaging_interface;
+        } else {
+          res = sec::no_actor_published_at_port;
         }
-        res = sec::no_actor_published_at_port;
       },
       [&](error& err) { res = std::move(err); });
   return res;
