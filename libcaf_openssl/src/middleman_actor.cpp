@@ -19,25 +19,25 @@
 
 #include "caf/io/middleman_actor.hpp"
 
-#include <stdexcept>
 #include <tuple>
+#include <stdexcept>
 #include <utility>
 
-#include "caf/actor.hpp"
-#include "caf/actor_proxy.hpp"
-#include "caf/actor_system_config.hpp"
-#include "caf/logger.hpp"
-#include "caf/node_id.hpp"
 #include "caf/sec.hpp"
 #include "caf/send.hpp"
+#include "caf/actor.hpp"
+#include "caf/logger.hpp"
+#include "caf/node_id.hpp"
+#include "caf/actor_proxy.hpp"
+#include "caf/actor_system_config.hpp"
 #include "caf/typed_event_based_actor.hpp"
 
 #include "caf/io/basp_broker.hpp"
-#include "caf/io/middleman_actor_impl.hpp"
 #include "caf/io/system_messages.hpp"
+#include "caf/io/middleman_actor_impl.hpp"
 
-#include "caf/io/network/default_multiplexer.hpp"
 #include "caf/io/network/interfaces.hpp"
+#include "caf/io/network/default_multiplexer.hpp"
 
 #include "caf/openssl/ssl_session.hpp"
 
@@ -53,12 +53,17 @@ struct ssl_policy {
   ssl_policy(std::shared_ptr<ssl_session> ssl) : ssl_(ssl) {
   }
 
-  bool read_some(size_t& result, native_socket fd, void* buf, size_t len) {
+  bool read_some(size_t& result, native_socket fd, void* buf,
+                        size_t len) {
+    CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
+
     return ssl_->read_some(result, fd, buf, len);
   }
 
   bool write_some(size_t& result, native_socket fd, const void* buf,
-                  size_t len) {
+                         size_t len) {
+    CAF_LOG_TRACE(CAF_ARG(fd) << CAF_ARG(len));
+
     return ssl_->write_some(result, fd, buf, len);
   }
 
@@ -81,90 +86,91 @@ struct ssl_policy {
     return ssl_->try_accept(result);
   }
 
+private:
   std::shared_ptr<ssl_session> ssl_;
 };
 
 class scribe_impl : public io::scribe {
-public:
-  scribe_impl(default_mpx& mpx, native_socket fd,
-              std::shared_ptr<ssl_session> ssl)
-      : scribe(io::network::conn_hdl_from_socket(fd)),
-        launched_(false),
-        stream_(mpx, fd, ssl) {
-    // nop
-  }
+  public:
+    scribe_impl(default_mpx& mpx, native_socket sockfd,
+                std::shared_ptr<ssl_session> ssl)
+        : scribe(io::network::conn_hdl_from_socket(sockfd)),
+          launched_(false),
+          stream_(mpx, sockfd, ssl) {
+      // nop
+    }
 
-  void configure_read(io::receive_policy::config config) override {
-    CAF_LOG_TRACE("");
-    stream_.configure_read(config);
-    if (!launched_)
-      launch();
-  }
+    void configure_read(io::receive_policy::config config) override {
+      CAF_LOG_TRACE("");
+      stream_.configure_read(config);
+      if (!launched_)
+        launch();
+    }
 
-  void ack_writes(bool enable) override {
-    CAF_LOG_TRACE(CAF_ARG(enable));
-    stream_.ack_writes(enable);
-  }
+    void ack_writes(bool enable) override {
+      CAF_LOG_TRACE(CAF_ARG(enable));
+      stream_.ack_writes(enable);
+    }
 
-  std::vector<char>& wr_buf() override {
-    return stream_.wr_buf();
-  }
+    std::vector<char>& wr_buf() override {
+      return stream_.wr_buf();
+    }
 
-  std::vector<char>& rd_buf() override {
-    return stream_.rd_buf();
-  }
+    std::vector<char>& rd_buf() override {
+      return stream_.rd_buf();
+    }
 
-  void stop_reading() override {
-    CAF_LOG_TRACE("");
-    stream_.stop_reading();
-    detach(&stream_.backend(), false);
-  }
+    void stop_reading() override {
+      CAF_LOG_TRACE("");
+      stream_.stop_reading();
+      detach(&stream_.backend(), false);
+    }
 
-  void flush() override {
-    CAF_LOG_TRACE("");
-    stream_.flush(this);
-  }
+    void flush() override {
+      CAF_LOG_TRACE("");
+      stream_.flush(this);
+    }
 
-  std::string addr() const override {
-    auto x = io::network::remote_addr_of_fd(stream_.fd());
-    if (!x)
-      return "";
-    return *x;
-  }
+    std::string addr() const override {
+      auto x = io::network::remote_addr_of_fd(stream_.fd());
+      if (!x)
+        return "";
+      return *x;
+    }
 
-  uint16_t port() const override {
-    auto x = io::network::remote_port_of_fd(stream_.fd());
-    if (!x)
-      return 0;
-    return *x;
-  }
+    uint16_t port() const override {
+      auto x = io::network::remote_port_of_fd(stream_.fd());
+      if (!x)
+        return 0;
+      return *x;
+    }
 
-  void launch() {
-    CAF_LOG_TRACE("");
-    CAF_ASSERT(!launched_);
-    launched_ = true;
-    stream_.start(this);
-  }
+    void launch() {
+      CAF_LOG_TRACE("");
+      CAF_ASSERT(!launched_);
+      launched_ = true;
+      stream_.start(this);
+    }
 
-  void add_to_loop() override {
-    stream_.activate(this);
-  }
+    void add_to_loop() override {
+      stream_.activate(this);
+    }
 
-  void remove_from_loop() override {
-    stream_.passivate();
-  }
+    void remove_from_loop() override {
+      stream_.passivate();
+    }
 
-private:
-  bool launched_;
-  io::network::stream_impl<ssl_policy> stream_;
+  private:
+    bool launched_;
+    io::network::stream_impl<ssl_policy> stream_;
 };
 
 class doorman_impl : public io::doorman {
 public:
-  doorman_impl(default_mpx& mx, native_socket fd,
+  doorman_impl(default_mpx& mx, native_socket sockfd,
                std::shared_ptr<ssl_session> ssl)
-      : doorman(io::network::accept_hdl_from_socket(fd)),
-        acceptor_(mx, fd, ssl),
+      : doorman(io::network::accept_hdl_from_socket(sockfd)),
+        acceptor_(mx, sockfd, ssl),
         ssl_(ssl) {
     // nop
   }
@@ -172,12 +178,11 @@ public:
   bool new_connection() override {
     CAF_LOG_TRACE("");
     if (detached())
-      // we are already disconnected from the broker while the multiplexer
-      // did not yet remove the socket, this can happen if an I/O event
-      // causes
-      // the broker to call close_all() while the pollset contained
-      // further activities for the broker
-      return false;
+       // we are already disconnected from the broker while the multiplexer
+       // did not yet remove the socket, this can happen if an I/O event causes
+       // the broker to call close_all() while the pollset contained
+       // further activities for the broker
+       return false;
     auto& dm = acceptor_.backend();
     auto sptr =
       make_counted<scribe_impl>(dm, acceptor_.accepted_socket(), ssl_);
@@ -234,7 +239,6 @@ public:
 protected:
   expected<io::scribe_ptr> connect(const std::string& host,
                                    uint16_t port) override {
-
     auto fd = io::network::new_tcp_connection(host, port);
 
     if (!fd)
@@ -250,7 +254,6 @@ protected:
 
   expected<io::doorman_ptr> open(uint16_t port, const char* addr,
                                  bool reuse) override {
-
     auto fd = io::network::new_tcp_acceptor_impl(port, addr, reuse);
 
     if (!fd)
@@ -270,9 +273,9 @@ private:
 } // namespace <anonymous>
 
 io::middleman_actor make_middleman_actor(actor_system& sys, actor db) {
-  return sys.config().middleman_detach_utility_actors ?
-           sys.spawn<middleman_actor_impl, detached + hidden>(std::move(db)) :
-           sys.spawn<middleman_actor_impl, hidden>(std::move(db));
+  return sys.config().middleman_detach_utility_actors
+             ? sys.spawn<middleman_actor_impl, detached + hidden>(std::move(db))
+             : sys.spawn<middleman_actor_impl, hidden>(std::move(db));
 }
 
 } // namespace openssl

@@ -19,20 +19,20 @@
 
 #include "caf/openssl/manager.hpp"
 
-#include "caf/actor_control_block.hpp"
-#include "caf/actor_system.hpp"
-#include "caf/actor_system_config.hpp"
-#include "caf/expected.hpp"
-#include "caf/scoped_actor.hpp"
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 
-#include "caf/io/basp_broker.hpp"
+#include "caf/expected.hpp"
+#include "caf/actor_system.hpp"
+#include "caf/scoped_actor.hpp"
+#include "caf/actor_control_block.hpp"
+#include "caf/actor_system_config.hpp"
+
 #include "caf/io/middleman.hpp"
+#include "caf/io/basp_broker.hpp"
 #include "caf/io/network/default_multiplexer.hpp"
 
 #include "caf/openssl/middleman_actor.hpp"
-
-#include <openssl/err.h>
-#include <openssl/ssl.h>
 
 namespace caf {
 namespace openssl {
@@ -64,8 +64,13 @@ void manager::init(actor_system_config&) {
   SSL_library_init();
   SSL_load_error_strings();
 
-  if (authentication_enabled() && !system().config().openssl_certificate.size())
-    CAF_RAISE_ERROR("No certificate configured for SSL endopint");
+  if (authentication_enabled()) {
+    if (!system().config().openssl_certificate.size())
+      CAF_RAISE_ERROR("No certificate configured for SSL endpoint");
+
+    if (!system().config().openssl_key.size())
+      CAF_RAISE_ERROR("No private key configured for SSL endpoint");
+  }
 }
 
 actor_system::module::id_t manager::id() const {
