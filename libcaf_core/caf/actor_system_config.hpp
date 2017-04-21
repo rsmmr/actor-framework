@@ -285,7 +285,6 @@ public:
   std::string openssl_passphrase;
   std::string openssl_capath;
   std::string openssl_cafile;
-  bool openssl_enable_hostname_check;
 
   // -- factories --------------------------------------------------------------
 
