@@ -113,28 +113,35 @@ SSL_CTX* ssl_session::create_ssl_context(actor_system& sys) {
 
     auto& cfg = sys.config();
 
-    if (SSL_CTX_use_certificate_chain_file(ctx, cfg.openssl_certificate.c_str())
-        != 1)
+    if (cfg.openssl_certificate.size()
+        && SSL_CTX_use_certificate_chain_file(ctx,
+                                              cfg.openssl_certificate.c_str())
+             != 1)
       raise_ssl_error("cannot load certificate");
-
-    if (SSL_CTX_use_PrivateKey_file(ctx, cfg.openssl_key.c_str(),
-                                    SSL_FILETYPE_PEM)
-        != 1)
-      raise_ssl_error("cannot load private key");
 
     if (cfg.openssl_passphrase.size()) {
       openssl_passphrase_ = cfg.openssl_passphrase;
       SSL_CTX_set_default_passwd_cb(ctx, pem_passwd_cb);
-      SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)ssl);
+      SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)this);
     }
+
+    if (cfg.openssl_key.size()
+        && SSL_CTX_use_PrivateKey_file(ctx, cfg.openssl_key.c_str(),
+                                       SSL_FILETYPE_PEM)
+             != 1)
+      raise_ssl_error("cannot load private key");
 
     auto cafile =
       (cfg.openssl_cafile.size() ? cfg.openssl_cafile.c_str() : nullptr);
     auto capath =
       (cfg.openssl_capath.size() ? cfg.openssl_capath.c_str() : nullptr);
 
-    if (SSL_CTX_load_verify_locations(ctx, cafile, capath) != 1)
-      raise_ssl_error("cannot load trusted CA certificates");
+    if (cafile || capath) {
+      if (SSL_CTX_load_verify_locations(ctx, cafile, capath) != 1)
+        raise_ssl_error("cannot load trusted CA certificates");
+    }
+
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
 
     if (SSL_CTX_set_cipher_list(ctx, "HIGH:!aNULL:!MD5") != 1)
       raise_ssl_error("cannot set cipher list");

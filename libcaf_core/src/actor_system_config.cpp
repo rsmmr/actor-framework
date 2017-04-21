@@ -184,9 +184,7 @@ actor_system_config::actor_system_config()
   .add(openssl_capath, "capath",
        "sets the path to an OpenSSL-style directory of trusted certificates")
   .add(openssl_cafile, "cafile",
-       "sets the path to a file containing trusted certificates concatenated together in PEM format")
-  .add(openssl_enable_hostname_check, "enable-hostname-check",
-       "enables or disables host name validation (on per default if certificates are used)");
+       "sets the path to a file containing trusted certificates concatenated together in PEM format");
   // add renderers for default error categories
   error_renderers.emplace(atom("system"), render_sec);
   error_renderers.emplace(atom("exit"), render_exit_reason);
